@@ -23,6 +23,11 @@ module.exports = (env) ->
         description: "Saturation value",
         type: t.number
       @actions = _.cloneDeep @actions
+      @actions.setHueSat =
+        description: 'set only hue and saturation but keep value.'
+        params:
+          colorCode:
+            type: t.string
       @actions.changeSaturationTo =
         description: "Sets the saturation value"
         params:
@@ -56,26 +61,31 @@ module.exports = (env) ->
 
     _onOffCommand: (newState, options = {}) ->
       commands = []
+      
       if newState
         commands.push @commands.fullColor.on @zoneId unless options.white
-        unless newState is @_previousState
+        if newState is @_previousState
+          if options.white
+            commands.push @commands.fullColor.whiteMode @zoneId
+          else
+            if options.hue?
+              commands.push @commands.fullColor.hue @zoneId, options.hue, true
+            if options.saturation?
+              commands.push @commands.fullColor.saturation @zoneId, options.saturation
+
+        else
           if options.white ? @_white
             commands.push @commands.fullColor.whiteMode @zoneId
           else
-            commands.push @commands.fullColor.hue @zoneId, options.hue ? @_hue, true
-            commands.push @commands.fullColor.saturation @zoneId, 0
-          commands.push @commands.fullColor.brightness @zoneId, options.dimlevel ? @_dimlevel
-          if options.brightness?
-            commands.push @commands.fullColor.brightness @zoneId, options.brightness
+            if options.hue?
+              commands.push @commands.fullColor.hue @zoneId, options.hue ? @_hue, true
+            if options.saturation?
+              commands.push @commands.fullColor.saturation @zoneId, options.saturation
+
+        if options.dimlevel
+          commands.push @commands.fullColor.brightness @zoneId, options.dimlevel 
         else
-          if options.white
-            commands.push @commands.fullColor.whiteMode @zoneId
-            commands.push @commands.fullColor.brightness @zoneId, options.dimlevel ? @_dimlevel
-          else if options.hue?
-            commands.push @commands.fullColor.hue @zoneId, options.hue, true
-            commands.push @commands.fullColor.saturation @zoneId, 0
-          if options.brightness?
-            commands.push @commands.fullColor.brightness @zoneId, options.brightness
+          commands.push @commands.fullColor.brightness @zoneId, @_dimlevel
       else
         commands.push @commands.fullColor.off @zoneId
       @_previousState = newState
@@ -93,6 +103,30 @@ module.exports = (env) ->
     getSaturation: () ->
       Promise.resolve @_saturation
 
+    setHueSat: (color) ->
+      @base.debug "huesat change requested to: #{color}"
+      rgb = @_hexStringToRgb color
+      @base.debug "RGB", rgb
+      if _.isEqual rgb, [255,255,255]
+        @base.debug "setting white mode"
+        @changeWhiteTo true
+      else
+        hsv = Milight.helper.rgbToHsv.apply Milight.helper, rgb
+        @base.debug "setting color to HSV: #{hsv}"
+        hsv[0] = (256 + 176 - Math.floor(Number(hsv[0]) / 360.0 * 255.0)) % 256;
+        hsv[1] = 100-hsv[1] # invert saturation value
+        @base.debug "setting color to HSV: #{hsv}"
+        @base.setAttribute "white", false
+        @base.setAttribute "hue", hsv[0]
+        @base.setAttribute "saturation", hsv[1]
+
+        if @_state
+          @_onOffCommand on,
+            white: false
+            hue: hsv[0]
+            saturation: hsv[1]
+            dimlevel: @_dimlevel
+
     setColor: (color) ->
       @base.debug "color change requested to: #{color}"
       rgb = @_hexStringToRgb color
@@ -104,6 +138,7 @@ module.exports = (env) ->
         hsv = Milight.helper.rgbToHsv.apply Milight.helper, rgb
         @base.debug "setting color to HSV: #{hsv}"
         hsv[0] = (256 + 176 - Math.floor(Number(hsv[0]) / 360.0 * 255.0)) % 256;
+        hsv[1] = 100-hsv[1] # invert saturation value
         @base.debug "setting color to HSV: #{hsv}"
         @base.setAttribute "white", false
         @_setDimlevel hsv[2]
